@@ -1,0 +1,55 @@
+{
+  "name": "openapi-mcp-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run lint && npm run typecheck && npm run test",
+    "test:cov": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@apidevtools/swagger-parser": "^13.0.0",
+    "@aws-sdk/client-cognito-identity-provider": "^3.1136.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "axios": "^1.20.0",
+    "commander": "^15.0.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "ip-range-check": "^0.2.1",
+    "ip-regex": "^5.0.0",
+    "ipaddr.js": "^2.5.0",
+    "js-yaml": "^4.3.2",
+    "winston": "^3.19.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.6.2",
+    "eslint": "^10.11.0",
+    "jest": "^30.5.2",
+    "nock": "^14.0.17",
+    "prettier": "^3.9.8",
+    "ts-jest": "^29.4.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^8.3.0",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
