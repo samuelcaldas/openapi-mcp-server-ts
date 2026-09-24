@@ -5,6 +5,7 @@
 - Clean Code
 - SOLID
 - Object Calisthenics
+- Add docstrings
 `/superpowers:using-superpowers`
 `/mattpocock-skills:grill-with-docs`
 
