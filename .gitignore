@@ -21,3 +21,5 @@ vendor/
 venv/
 __pycache__/
 *.py[cod]
+.worktrees/
+.playwright-mcp/
