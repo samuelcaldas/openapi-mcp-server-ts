@@ -1,7 +1,12 @@
 # Plano: stdio, Streamable HTTP remoto e CLI npm
 
 # Main rulles
-TDD, Clean Code, SOLID, Object Calisthenics
+- TDD
+- Clean Code
+- SOLID
+- Object Calisthenics
+`/superpowers:using-superpowers`
+`/mattpocock-skills:grill-with-docs`
 
 ## Contexto
 
