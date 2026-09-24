@@ -2,35 +2,18 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { config } from "../utils/config.js";
 import { createHttpClient } from "../utils/httpClient.js";
+import type { CredentialProvider } from "../auth/token_exchange.js";
+import { buildRouteMaps, type RouteMap } from "./route_map.js";
 
 const HTTP_METHODS = new Set(["get", "put", "post", "delete", "patch", "options", "head", "trace"]);
 
-export interface RouteMap {
-  methods: ["GET"];
-  pattern: string;
-  mcpType: "tool";
-}
+export { buildRouteMaps, type RouteMap };
 
-export function buildRouteMaps(apiSpec: any): RouteMap[] {
-  const mappings: RouteMap[] = [];
-  for (const [routePath, pathItem] of Object.entries(apiSpec?.paths ?? {})) {
-    if (!pathItem || typeof pathItem !== "object" || Array.isArray(pathItem)) continue;
-    for (const [method, operation] of Object.entries(pathItem as Record<string, unknown>)) {
-      if (method.toLowerCase() !== "get" || !operation || typeof operation !== "object" || Array.isArray(operation)) continue;
-      const parameters = Array.isArray((operation as { parameters?: unknown }).parameters)
-        ? (operation as { parameters: unknown[] }).parameters
-        : [];
-      const hasQueryParameter = parameters.some((parameter) => parameter && typeof parameter === "object" && (parameter as { in?: string }).in === "query");
-      if (hasQueryParameter) mappings.push({ methods: ["GET"], pattern: `^${escapeRegExp(routePath)}$`, mcpType: "tool" });
-    }
-  }
-  return mappings;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
+/**
+ * Converts an OpenAPI schema definition into a corresponding Zod validation schema.
+ * @param schema OpenAPI schema definition.
+ * @returns Zod schema instance.
+ */
 export function getZodType(schema: any): z.ZodTypeAny {
   if (!schema) return z.any();
   if (schema.type === "string") return schema.enum ? z.enum(schema.enum as [string, ...string[]]) : z.string();
@@ -52,12 +35,22 @@ export function getZodType(schema: any): z.ZodTypeAny {
 type HttpClientLike = { request: (config: Record<string, unknown>) => Promise<{ data: unknown; status?: number }> };
 type ToolRegistrationArguments = HttpClientLike | string[];
 
+/**
+ * Registers MCP tools on the given McpServer based on the OpenAPI specification operations.
+ * @param server Target McpServer instance.
+ * @param apiSpec OpenAPI specification object.
+ * @param httpClientOrIncludeTags HTTP client instance or array of tags to include.
+ * @param includeTagsOrExcludeTags Included or excluded tags depending on overload.
+ * @param excludeTags Excluded tags list.
+ * @param credentialProvider Optional credential provider for delegated or user authentication.
+ */
 export function registerToolsFromOpenApi(
   server: McpServer,
   apiSpec: any,
   httpClientOrIncludeTags: ToolRegistrationArguments = createHttpClient(),
   includeTagsOrExcludeTags: string[] = [],
   excludeTags: string[] = [],
+  credentialProvider?: CredentialProvider,
 ): void {
   const usesLegacySignature = Array.isArray(httpClientOrIncludeTags);
   const httpClient = usesLegacySignature ? createHttpClient() : httpClientOrIncludeTags;
@@ -76,7 +69,9 @@ export function registerToolsFromOpenApi(
       const parameters = collectParameters(pathItem as Record<string, unknown>, operation);
       const inputSchema = buildInputSchema(parameters, operation);
       const description = buildToolDescription(method, routePath, operation, parameters);
-      server.tool(operation.operationId, description, inputSchema, async (args: any) => executeOperation(httpClient, baseUrl, routePath, method, parameters, operation, args));
+      server.tool(operation.operationId, description, inputSchema, async (args: any, extra: any) =>
+        executeOperation(httpClient, baseUrl, routePath, method, parameters, operation, args, extra, credentialProvider)
+      );
     }
   }
 }
@@ -118,26 +113,50 @@ function buildToolDescription(method: string, routePath: string, operation: Reco
   return lines.filter(Boolean).join("\n");
 }
 
-async function executeOperation(httpClient: HttpClientLike, baseUrl: string, routePath: string, method: string, parameters: any[], operation: Record<string, any>, args: any): Promise<any> {
-  let requestUrl = `${baseUrl}${routePath}`;
-  const queryParams: Record<string, unknown> = {};
-  const headers: Record<string, string> = {};
-  for (const parameter of parameters) {
-    const value = args[parameter.name];
-    if (value === undefined) continue;
-    if (parameter.in === "path") requestUrl = requestUrl.replace(`{${parameter.name}}`, encodeURIComponent(String(value)));
-    if (parameter.in === "query") queryParams[parameter.name] = value;
-    if (parameter.in === "header") headers[parameter.name] = String(value);
-    if (parameter.in === "cookie") headers.Cookie = `${headers.Cookie ? `${headers.Cookie}; ` : ""}${parameter.name}=${encodeURIComponent(String(value))}`;
-  }
+async function executeOperation(
+  httpClient: HttpClientLike,
+  baseUrl: string,
+  routePath: string,
+  method: string,
+  parameters: any[],
+  operation: Record<string, any>,
+  args: any,
+  extra?: any,
+  credentialProvider?: CredentialProvider,
+): Promise<any> {
   try {
-    const response = await httpClient.request({ method: method.toUpperCase(), url: requestUrl, params: queryParams, headers, data: args.body });
+    const headers: Record<string, string> = {};
+    if (credentialProvider) {
+      const authHeaders = await credentialProvider.resolveAuthHeaders(extra?.authInfo);
+      Object.assign(headers, authHeaders);
+    }
+    const { url, params } = populateParameters(baseUrl, routePath, parameters, args, headers);
+    const response = await httpClient.request({ method: method.toUpperCase(), url, params, headers, data: args.body });
     let data = response.data;
     if (config.VALIDATE_OUTPUT) data = validateOutput(data, operation.responses, response.status);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   } catch (error: any) {
     return { isError: true, content: [{ type: "text", text: error?.response ? JSON.stringify(error.response.data) : String(error?.message ?? error) }] };
   }
+}
+
+function populateParameters(baseUrl: string, routePath: string, parameters: any[], args: any, headers: Record<string, string>): { url: string; params: Record<string, unknown> } {
+  let url = `${baseUrl}${routePath}`;
+  const params: Record<string, unknown> = {};
+  for (const parameter of parameters) {
+    const value = args[parameter.name];
+    if (value === undefined) continue;
+    if (parameter.in === "path") url = url.replace(`{${parameter.name}}`, encodeURIComponent(String(value)));
+    if (parameter.in === "query") params[parameter.name] = value;
+    if (parameter.in === "header") appendHeaderParam(headers, parameter.name, String(value));
+    if (parameter.in === "cookie") headers.Cookie = `${headers.Cookie ? `${headers.Cookie}; ` : ""}${parameter.name}=${encodeURIComponent(String(value))}`;
+  }
+  return { url, params };
+}
+
+function appendHeaderParam(headers: Record<string, string>, name: string, value: string): void {
+  if (name.toLowerCase() === "authorization" && headers.Authorization) return;
+  headers[name] = value;
 }
 
 function validateOutput(data: unknown, responses: Record<string, any> | undefined, status: number | undefined): unknown {

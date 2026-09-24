@@ -1,15 +1,39 @@
+import fs from "fs";
+import { fileURLToPath } from "url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAppTool, registerAppResource } from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
-import fs from "fs";
-import path from "path";
 
-export function registerUiApp(server: McpServer) {
-  const htmlContent = fs.readFileSync(path.join(process.cwd(), "dist-app", "index.html"), "utf8");
-  const rawServer = (server as any).server;
+/**
+ * Registers the OpenAPI UI app as an MCP resource and launch tool.
+ * Resolves the bundled inline HTML relative to the installed package.
+ * @param server Target McpServer instance.
+ */
+export function registerUiApp(server: McpServer): void {
+  const htmlContent = resolveUiHtml();
+  if (!htmlContent) return;
 
+  registerResource(server, htmlContent);
+  registerTool(server);
+}
+
+function resolveUiHtml(): string | undefined {
+  const candidatePaths = [
+    fileURLToPath(new URL("../dist-app/index.html", import.meta.url)),
+    fileURLToPath(new URL("./dist-app/index.html", import.meta.url)),
+  ];
+
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      return fs.readFileSync(candidate, "utf8");
+    }
+  }
+  return undefined;
+}
+
+function registerResource(server: McpServer, htmlContent: string): void {
   registerAppResource(
-    rawServer,
+    server,
     "OpenAPI UI",
     "api://openapi-app",
     {},
@@ -22,35 +46,32 @@ export function registerUiApp(server: McpServer) {
           _meta: {
             ui: {
               csp: {
-                // From CSP Investigation: No external domains needed as the bundle is fully inline
                 connectDomains: [],
-                resourceDomains: []
-              }
-            }
-          }
-        }
-      ]
+                resourceDomains: [],
+              },
+            },
+          },
+        },
+      ],
     })
   );
+}
 
+function registerTool(server: McpServer): void {
   registerAppTool(
-    rawServer,
+    server,
     "openapi_ui",
     {
       description: "Launch OpenAPI UI App",
       inputSchema: z.object({}),
       _meta: {
         ui: {
-          resourceUri: "api://openapi-app"
-        }
-      }
+          resourceUri: "api://openapi-app",
+        },
+      },
     },
-    async (args: any) => {
-      return {
-        content: [
-          { type: "text", text: "UI Launched successfully" }
-        ]
-      };
-    }
+    async () => ({
+      content: [{ type: "text", text: "UI Launched successfully" }],
+    })
   );
 }
