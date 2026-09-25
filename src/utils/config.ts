@@ -144,7 +144,10 @@ function toNumber(value: number | string | undefined): number | undefined {
 export function loadConfig(args?: ConfigOptions | Record<string, unknown>): Config {
   const environment = readEnvironment();
   const normalizedArgs = args ? normalizeArgs(args) : {};
-  return new Config({ ...environment, ...normalizedArgs });
+  const suppliedArgs = Object.fromEntries(
+    Object.entries(normalizedArgs).filter(([, value]) => value !== undefined)
+  );
+  return new Config({ ...environment, ...suppliedArgs });
 }
 
 export const config = {

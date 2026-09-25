@@ -1,4 +1,6 @@
 import { jest } from "@jest/globals";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import {
   exchangeToken,
   UserDelegationCredentialProvider,
@@ -7,6 +9,30 @@ import {
 
 describe("OAuth 2.0 Token Exchange and Credential Provider", () => {
   describe("exchangeToken (RFC 8693)", () => {
+    it("refuses redirects before sending the user token to another endpoint", async () => {
+      let redirected = 0;
+      const server = http.createServer((request, response) => {
+        if (request.url === "/redirected") {
+          redirected += 1;
+          response.end(JSON.stringify({ access_token: "unsafe" }));
+          return;
+        }
+        response.writeHead(307, { Location: "/redirected" });
+        response.end();
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const port = (server.address() as AddressInfo).port;
+      try {
+        await expect(exchangeToken("user-secret", {
+          tokenExchangeUrl: `http://127.0.0.1:${port}/exchange`,
+          targetAudience: "https://api.example.com",
+          allowInsecureHttp: true, allowPrivateNetworks: true,
+        })).rejects.toThrow("Token exchange failed");
+        expect(redirected).toBe(0);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
     it("successfully exchanges user token for API-specific token", async () => {
       const mockHttpClient = {
         post: jest.fn().mockResolvedValue({
@@ -43,6 +69,19 @@ describe("OAuth 2.0 Token Exchange and Credential Provider", () => {
       );
     });
 
+    it("never includes a reflected user token in token exchange errors", async () => {
+      const injectedClient = { post: jest.fn().mockRejectedValue({
+        response: { status: 400, data: { error: "reflected-sensitive-user-token" } },
+      }) };
+      const exchange = exchangeToken("reflected-sensitive-user-token", {
+        tokenExchangeUrl: "http://127.0.0.1:8080/oauth/token",
+        targetAudience: "https://api.example.com",
+        allowInsecureHttp: true, allowPrivateNetworks: true,
+      }, injectedClient);
+      await expect(exchange).rejects.toThrow("Token exchange failed");
+      await expect(exchange).rejects.not.toThrow("reflected-sensitive-user-token");
+    });
+
     it("fails closed when IdP returns an error response", async () => {
       const mockHttpClient = {
         post: jest.fn().mockRejectedValue({
@@ -61,7 +100,7 @@ describe("OAuth 2.0 Token Exchange and Credential Provider", () => {
           },
           mockHttpClient
         )
-      ).rejects.toThrow("Token exchange failed: invalid_grant");
+      ).rejects.toThrow("Token exchange failed (HTTP 400)");
     });
   });
 

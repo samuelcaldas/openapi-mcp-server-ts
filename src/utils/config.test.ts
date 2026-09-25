@@ -28,6 +28,19 @@ describe("Config and ConfigValidator", () => {
     expect(cfg.inbound_bearer_token).toBe("secret-token");
   });
 
+  it("preserves environment bearer credentials when CLI omits the secret", () => {
+    const previous = process.env.INBOUND_BEARER_TOKEN;
+    try {
+      process.env.INBOUND_BEARER_TOKEN = "environment-only-token";
+      const configuration = loadConfig({ transport: "http", inboundAuthType: "bearer" });
+      expect(configuration.inbound_bearer_token).toBe("environment-only-token");
+      expect(() => validateConfig(configuration)).not.toThrow();
+    } finally {
+      if (previous === undefined) delete process.env.INBOUND_BEARER_TOKEN;
+      if (previous !== undefined) process.env.INBOUND_BEARER_TOKEN = previous;
+    }
+  });
+
   it("rejects discontinued transport 'sse' with migration message", () => {
     const cfg = new Config({ transport: "sse", apiBaseUrl: "https://api.example.com" });
     expect(() => validateConfig(cfg)).toThrow(

@@ -4,6 +4,12 @@ This document describes the architecture, configuration, security hardening, and
 
 ---
 
+## Embedded SDK and standalone server
+
+To add only OpenAPI tools to an existing `McpServer`, use the side-effect-free package root described in [SDK integration](sdk-integration.md). The embedding host owns inbound authentication and transport lifecycle; `context.auth_info` for direct calls or `extra.authInfo` for registered tools must come from a validated host identity. The standalone CLI continues to provide stdio, remote Streamable HTTP, prompts, and the optional UI.
+
+Remote standalone listeners reject unauthenticated non-loopback binding and require explicit `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`, and specific `TRUST_PROXY` addresses. Requests without an Origin header (for example, non-browser MCP clients) are allowed; supplied Origins must match the allowlist. Terminate TLS at a trusted reverse proxy, restrict direct access, and never configure `TRUST_PROXY=true` or wildcard allowlists.
+
 ## 1. Architecture Overview
 
 `openapi-mcp-server` supports two primary transports:

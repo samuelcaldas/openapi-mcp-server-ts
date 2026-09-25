@@ -52,6 +52,27 @@ npx openapi-mcp-server \
 
 For advanced configurations (OAuth 2.1, RFC 8693 Token Exchange, Nginx Proxy Manager integration), see [docs/streamable-http.md](docs/streamable-http.md) and [.env.example](.env.example).
 
+## Embed the SDK in an existing MCP server
+
+Importing the package root does not start the CLI or install signal handlers. Your host owns its transport and inbound authentication:
+
+```ts
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { prepare_openapi_integration } from "openapi-mcp-server";
+
+const server = new McpServer({ name: "my-host", version: "1.0.0" });
+const integration = await prepare_openapi_integration({
+    source: "./openapi.yaml",
+    base_url: "https://api.example.com/v1",
+});
+integration.register_tools(server, { prefix: "api" });
+
+const result = await integration.execute_operation("getItem", { id: "123" });
+console.log(result.status, result.data);
+```
+
+Use a distinct prefix for each integration registered on the same MCP server. SDK registration adds tools only; the standalone CLI adds prompts and the optional UI. See [the SDK guide](docs/sdk-integration.md) for multiple specifications, validation, credentials, and network policy.
+
 ## Development
 
 ```bash

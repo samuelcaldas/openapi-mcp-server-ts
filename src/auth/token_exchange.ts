@@ -1,6 +1,5 @@
-import axios from "axios";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import { validateUrlForSpec } from "../utils/httpClient.js";
+import { createHttpClient, validateUrlForSpec } from "../utils/httpClient.js";
 
 export interface TokenExchangeOptions {
   tokenExchangeUrl: string;
@@ -20,7 +19,7 @@ export interface CredentialProvider {
 export async function exchangeToken(
   userToken: string,
   options: TokenExchangeOptions,
-  httpClient: { post: (url: string, data: string, config: any) => Promise<any> } = axios
+  httpClient: { post: (url: string, data: string, config: any) => Promise<any> } = createHttpClient(options.allowPrivateNetworks ?? false, options.allowInsecureHttp ?? false)
 ): Promise<string> {
   await validateUrlForSpec(options.tokenExchangeUrl, {
     allowHttp: options.allowInsecureHttp,
@@ -31,15 +30,19 @@ export async function exchangeToken(
   const headers = buildExchangeHeaders(options);
 
   try {
-    const response = await httpClient.post(options.tokenExchangeUrl, body, { headers });
+    const response = await httpClient.post(options.tokenExchangeUrl, body, {
+      headers, timeout: 5000, maxRedirects: 0, maxBodyLength: 65536, maxContentLength: 65536, proxy: false,
+    });
     const accessToken = response.data?.access_token;
     if (!accessToken || typeof accessToken !== "string") {
       throw new Error("Token exchange response did not contain access_token.");
     }
     return accessToken;
-  } catch (error: any) {
-    const reason = error.response?.data?.error || error.message || "Unknown error";
-    throw new Error(`Token exchange failed: ${reason}`, { cause: error });
+  } catch (error) {
+    const status = (error as { response?: { status?: number } }).response?.status;
+    // The upstream error can contain reflected user credentials; do not expose it as a cause.
+    // eslint-disable-next-line preserve-caught-error
+    throw new Error(`Token exchange failed${status ? ` (HTTP ${status})` : " (connection or invalid response)"}`);
   }
 }
 

@@ -6,8 +6,25 @@ export function validateConfig(configuration: Config): void {
   validateTransport(configuration.transport);
   validateHostAndPort(configuration.host, configuration.port);
   validateSpecLocation(configuration);
+  validateListenerConfig(configuration);
+}
+
+/** Enforce remote listener security without rejecting programmatic port zero. */
+export function validateListenerConfig(configuration: Config): void {
   validateInboundAuth(configuration);
   validateDelegation(configuration);
+  if (configuration.transport !== "http" || LOOPBACK_HOSTS.has(configuration.host.toLowerCase())) return;
+  requireAllowlist(configuration.allowed_hosts, "ALLOWED_HOSTS");
+  requireAllowlist(configuration.allowed_origins, "ALLOWED_ORIGINS");
+  if (!configuration.trust_proxy || configuration.trust_proxy === "true" || configuration.trust_proxy === "*") {
+    throw new Error("Remote listeners require explicitly declared TRUST_PROXY addresses");
+  }
+}
+
+function requireAllowlist(value: string, label: string): void {
+  if (!value.trim() || value.split(",").some((item) => !item.trim() || item.trim() === "*")) {
+    throw new Error(`Remote listeners require an explicit ${label} allowlist`);
+  }
 }
 
 function validateTransport(transport: string): void {

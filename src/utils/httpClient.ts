@@ -1,6 +1,5 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type InternalAxiosRequestConfig } from "axios";
 import https from "node:https";
-import { config } from "./config.js";
 import {
   SSRFError,
   SSRFFetchError,
@@ -57,6 +56,7 @@ export async function fetchPinned(url: ValidatedURL, options: { allowHttp?: bool
       const response = await axios.get<ArrayBuffer>(pinnedUrl, {
         responseType: "arraybuffer",
         timeout: timeoutMs,
+        proxy: false,
         maxRedirects: 0,
         maxContentLength: maxBytes,
         maxBodyLength: maxBytes,
@@ -82,9 +82,10 @@ export async function fetchPinned(url: ValidatedURL, options: { allowHttp?: bool
   throw new SSRFFetchError(`No resolved IPs available for ${getOriginalUrl(url)}`);
 }
 
-export function createHttpClient(allowPrivateNetworks = config.ALLOW_PRIVATE_NETWORKS, allowInsecureHttp = config.ALLOW_INSECURE_HTTP): AxiosInstance {
+export function createHttpClient(allowPrivateNetworks = false, allowInsecureHttp = false): AxiosInstance {
   const client = axios.create({
     timeout: 30_000,
+    proxy: false,
     maxRedirects: 0,
     maxContentLength: MAX_SPEC_BYTES,
     maxBodyLength: MAX_SPEC_BYTES,
@@ -104,6 +105,8 @@ export function createHttpClient(allowPrivateNetworks = config.ALLOW_PRIVATE_NET
 }
 
 async function pinRequest(request: InternalAxiosRequestConfig, allowPrivateNetworks: boolean, allowInsecureHttp: boolean): Promise<InternalAxiosRequestConfig> {
+  request.proxy = false;
+  request.maxRedirects = 0;
   if (!request.url) return request;
   const fullUrl = request.baseURL ? new URL(request.url, request.baseURL).toString() : request.url;
   const validated = await validateUrlForSpec(fullUrl, { allowPrivateNetworks, allowHttp: allowInsecureHttp });
@@ -112,7 +115,7 @@ async function pinRequest(request: InternalAxiosRequestConfig, allowPrivateNetwo
   if (typeof request.headers.set === "function") request.headers.set("Host", validated.hostname);
   else (request.headers as unknown as Record<string, string>).Host = validated.hostname;
   if (new URL(fullUrl).protocol === "https:") {
-    request.httpsAgent = new https.Agent({ servername: validated.hostname, rejectUnauthorized: true, keepAlive: true, maxSockets: config.HTTP_MAX_CONNECTIONS, maxFreeSockets: config.HTTP_MAX_KEEPALIVE });
+    request.httpsAgent = new https.Agent({ servername: validated.hostname, rejectUnauthorized: true, keepAlive: true, maxSockets: 100, maxFreeSockets: 20 });
   }
   return request;
 }

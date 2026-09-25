@@ -7,6 +7,18 @@ import { prepareServerEnvironment } from "../server.js";
 import { startHttpServer } from "./http.js";
 
 describe("Streamable HTTP Transport", () => {
+  it("rejects unauthenticated programmatic non-loopback listeners before binding", async () => {
+    const configuration = new Config({
+      transport: "http", host: "0.0.0.0", port: 0,
+      inboundAuthType: "none", allowPrivateNetworks: true,
+    });
+    const environment = await prepareServerEnvironment(configuration);
+    const outcome = await startHttpServer(environment).then(async (handle) => {
+      await handle.close();
+      return "listener started";
+    }, (error: Error) => error.message);
+    expect(outcome).toContain("Inbound authentication 'none' is forbidden on non-loopback");
+  });
   let serverHandle: Awaited<ReturnType<typeof startHttpServer>>;
   let serverUrl: string;
   const bearerSecret = "test-bearer-secret-777";

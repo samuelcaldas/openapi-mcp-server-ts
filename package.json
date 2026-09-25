@@ -2,7 +2,14 @@
   "name": "openapi-mcp-server",
   "version": "1.0.0",
   "description": "",
-  "main": "dist/index.js",
+  "main": "./dist/public.js",
+  "types": "./dist/public.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/public.d.ts",
+      "import": "./dist/public.js"
+    }
+  },
   "bin": {
     "openapi-mcp-server": "./dist/index.js"
   },
@@ -10,7 +17,8 @@
     "dist",
     "dist-app",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "manifest.json"
   ],
   "engines": {
     "node": ">=18.0.0"
@@ -19,6 +27,7 @@
     "doc": "docs"
   },
   "scripts": {
+    "pretest": "npm run build",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "build": "vite build && tsc",
     "start": "node dist/index.js",

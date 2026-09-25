@@ -1,112 +1,80 @@
-import { jest } from "@jest/globals";
+import { afterAll, beforeAll, describe, expect, it } from "@jest/globals";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerToolsFromOpenApi } from "./index.js";
+import { createHttpClient } from "../utils/httpClient.js";
 import type { CredentialProvider } from "../auth/token_exchange.js";
+import { registerToolsFromOpenApi } from "./index.js";
 
-describe("Tool execution with CredentialProvider", () => {
-  const dummySpec = {
-    openapi: "3.0.0",
-    info: { title: "Test API", version: "1.0.0" },
-    servers: [{ url: "https://api.example.com" }],
-    paths: {
-      "/secure-data": {
-        get: {
-          operationId: "getSecureData",
-          parameters: [
-            {
-              name: "Authorization",
-              in: "header",
-              schema: { type: "string" },
-            },
-            {
-              name: "filter",
-              in: "query",
-              schema: { type: "string" },
-            },
-          ],
-          responses: {
-            "200": {
-              description: "OK",
-              content: { "application/json": { schema: { type: "object" } } },
-            },
-          },
-        },
-      },
-    },
-  };
+const spec = {
+  openapi: "3.0.0", info: { title: "Delegated", version: "1.0.0" },
+  servers: [{ url: "" }],
+  paths: { "/secure": { get: {
+    operationId: "secure", parameters: [{ name: "filter", in: "query", schema: { type: "string" } }],
+    responses: { "200": { description: "OK" } },
+  } } },
+};
 
-  it("injects delegated Authorization header from CredentialProvider and prevents operation override", async () => {
-    const mockHttpClient = {
-      request: jest.fn<any>().mockResolvedValue({ status: 200, data: { success: true } }),
-    };
-
-    const credentialProvider: CredentialProvider = {
-      resolveAuthHeaders: jest.fn<any>().mockResolvedValue({ Authorization: "Bearer delegated-token-456" }),
-    };
-
-    const server = new McpServer({ name: "test", version: "1.0.0" });
-    registerToolsFromOpenApi(
-      server,
-      dummySpec,
-      mockHttpClient,
-      [],
-      [],
-      credentialProvider
-    );
-
-    // Get the registered tool callback from McpServer
-    const registeredTool = (server as any)._registeredTools["getSecureData"];
-    expect(registeredTool).toBeDefined();
-
-    const extra = {
-      authInfo: {
-        token: "incoming-user-jwt",
-        clientId: "user-123",
-        scopes: [],
-      },
-    };
-
-    // User attempts to override Authorization with their own parameter
-    const result = await registeredTool.handler(
-      { Authorization: "Bearer attacker-provided-header", filter: "active" },
-      extra
-    );
-
-    expect(result.isError).toBeFalsy();
-    expect(mockHttpClient.request).toHaveBeenCalledWith(
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: "Bearer delegated-token-456",
-        }),
-        params: { filter: "active" },
-      })
-    );
+describe("Legacy tool registration with delegated credentials", () => {
+  let api: http.Server;
+  let requests = 0;
+  beforeAll(async () => {
+    api = http.createServer((request, response) => {
+      requests += 1;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ authorization: request.headers.authorization, path: request.url }));
+    });
+    await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
+    spec.servers[0].url = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
+  });
+  afterAll(async () => {
+    await new Promise<void>((resolve) => api.close(() => resolve()));
   });
 
-  it("fails closed when CredentialProvider rejects", async () => {
-    const mockHttpClient = {
-      request: jest.fn<any>(),
+  it("rejects case-insensitive Authorization parameters before registering tools", () => {
+    const server = new McpServer({ name: "headers", version: "1.0.0" });
+    const unsafe = { ...spec, paths: { "/secure": { get: {
+      ...spec.paths["/secure"].get,
+      parameters: [{ name: "authorization", in: "header", schema: { type: "string" } }],
+    } } } };
+    expect(() => registerToolsFromOpenApi(server, unsafe, createHttpClient(true, true)))
+      .toThrow("Authorization parameter is forbidden");
+  });
+
+  it("sends the resolved destination token through a real MCP tool call", async () => {
+    const provider: CredentialProvider = {
+      async resolveAuthHeaders() { return { Authorization: "Bearer destination-token" }; },
     };
+    const response = await callRegisteredTool(provider, { filter: "active" });
+    expect(response.isError).not.toBe(true);
+    expect(response.content).toEqual([{ type: "text", text: JSON.stringify({ authorization: "Bearer destination-token", path: "/secure?filter=active" }, null, 2) }]);
+  });
 
-    const credentialProvider: CredentialProvider = {
-      resolveAuthHeaders: jest.fn<any>().mockRejectedValue(new Error("Token exchange failed: invalid_grant")),
+  it("fails closed without contacting the destination on credential failure", async () => {
+    const before = requests;
+    const provider: CredentialProvider = {
+      async resolveAuthHeaders() { throw new Error("Token exchange failed"); },
     };
-
-    const server = new McpServer({ name: "test", version: "1.0.0" });
-    registerToolsFromOpenApi(
-      server,
-      dummySpec,
-      mockHttpClient,
-      [],
-      [],
-      credentialProvider
-    );
-
-    const registeredTool = (server as any)._registeredTools["getSecureData"];
-    const result = await registeredTool.handler({ filter: "active" }, {});
-
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Token exchange failed: invalid_grant");
-    expect(mockHttpClient.request).not.toHaveBeenCalled();
+    const response = await callRegisteredTool(provider, { filter: "active" });
+    expect(response.isError).toBe(true);
+    expect(requests).toBe(before);
+    expect(JSON.stringify(response.content)).not.toContain("destination-token");
   });
 });
+
+async function callRegisteredTool(provider: CredentialProvider, args: Record<string, unknown>) {
+  const server = new McpServer({ name: "delegation", version: "1.0.0" });
+  registerToolsFromOpenApi(server, spec, createHttpClient(true, true), [], [], provider);
+  const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "caller", version: "1.0.0" });
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    return await client.callTool({ name: "secure", arguments: args });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}

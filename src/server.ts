@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Config } from "./utils/config.js";
 import { createHttpClient, validateUrlForSpec } from "./utils/httpClient.js";
 import { parseOpenApiSpec } from "./utils/openapi.js";
-import { registerToolsFromOpenApi } from "./tools/index.js";
+import { prepare_openapi_integration } from "./integration/index.js";
 import { registerPromptsFromOpenApi } from "./prompts/index.js";
 import { configureAuth, type AuthType } from "./auth/index.js";
 import {
@@ -34,14 +34,14 @@ export async function prepareServerEnvironment(configuration: Config): Promise<P
   const allowedDirs = splitValues(configuration.allowed_spec_dirs);
   await validateBaseUrl(configuration);
 
+  const credentialProvider = createCredentialProvider(configuration);
   const specs: PreparedSpecEntry[] = [];
-  const primaryEntry = await loadPrimaryEntry(configuration, allowedDirs);
+  const primaryEntry = await loadPrimaryEntry(configuration, allowedDirs, credentialProvider);
   if (primaryEntry) specs.push(primaryEntry);
 
-  const additionalEntries = await loadAdditionalEntries(configuration, allowedDirs);
+  const additionalEntries = await loadAdditionalEntries(configuration, allowedDirs, credentialProvider);
   specs.push(...additionalEntries);
 
-  const credentialProvider = createCredentialProvider(configuration);
   return { configuration, specs, credentialProvider };
 }
 
@@ -56,16 +56,9 @@ export function createServerInstance(environment: PreparedServerEnvironment): Mc
     version: environment.configuration.version,
   });
 
-  for (const entry of environment.specs) {
-    registerToolsFromOpenApi(
-      server,
-      entry.spec,
-      entry.client,
-      entry.includeTags,
-      entry.excludeTags,
-      environment.credentialProvider
-    );
-    registerPromptsFromOpenApi(server, entry.spec);
+  for (const [index, entry] of environment.specs.entries()) {
+    entry.integration.register_tools(server);
+    registerPromptsFromOpenApi(server, entry.spec, index === 0);
   }
 
   registerUiApp(server);
@@ -90,22 +83,27 @@ async function validateBaseUrl(configuration: Config): Promise<void> {
   });
 }
 
-async function loadPrimaryEntry(configuration: Config, allowedDirs: string[]): Promise<PreparedSpecEntry | undefined> {
+async function loadPrimaryEntry(configuration: Config, allowedDirs: string[], provider: CredentialProvider): Promise<PreparedSpecEntry | undefined> {
   const source = configuration.api_spec_url || configuration.api_spec_path;
   if (!source) return undefined;
   const spec = await parseOpenApiSpec(source, configuration.allow_private_networks, configuration.allow_insecure_http, allowedDirs);
   const client = createConfiguredClient(configuration);
   const configuredSpec = { ...spec, servers: [{ url: configuration.api_base_url }] };
-  return {
-    spec: configuredSpec,
-    client,
-    includeTags: splitValues(configuration.include_tags),
-    excludeTags: splitValues(configuration.exclude_tags),
-  };
+  const includeTags = splitValues(configuration.include_tags);
+  const excludeTags = splitValues(configuration.exclude_tags);
+  const integration = await prepare_openapi_integration({
+    source: spec, base_url: configuration.api_base_url, include_tags: includeTags,
+    exclude_tags: excludeTags, validate_output: configuration.validate_output,
+    credential_provider: provider, http_client: client,
+    network_policy: { allow_private_networks: configuration.allow_private_networks,
+      allow_insecure_http: configuration.allow_insecure_http, allowed_spec_dirs: allowedDirs },
+  });
+  return { spec: configuredSpec, client, includeTags, excludeTags, integration };
 }
 
 function createConfiguredClient(configuration: Config): ReturnType<typeof createHttpClient> {
   const client = createHttpClient(configuration.allow_private_networks, configuration.allow_insecure_http);
+  if (configuration.delegation_mode === "user") return client;
   configureAuth(client, configuration.auth_type as AuthType, {
     token: configuration.auth_token,
     username: configuration.auth_username,

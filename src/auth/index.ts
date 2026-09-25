@@ -1,5 +1,5 @@
 import type { AxiosInstance, InternalAxiosRequestConfig } from "axios";
-import { getAuthProvider, isAuthTypeAvailable, registerAuthProvider, clearProviderCache } from "./auth_factory.js";
+import { createUncachedAuthProvider, getAuthProvider, isAuthTypeAvailable, registerAuthProvider, clearProviderCache } from "./auth_factory.js";
 import { AuthProvider, NullAuthProvider } from "./auth_provider.js";
 import { ApiKeyAuthProvider } from "./api_key_auth.js";
 import { BasicAuthProvider } from "./basic_auth.js";
@@ -29,10 +29,8 @@ export * from "./auth_cache.js";
 export * from "./auth_provider.js";
 
 export function configureAuth(client: AxiosInstance, authType: AuthType, options: AuthOptions): void {
-  client.interceptors.request.use((request: InternalAxiosRequestConfig) => {
-    const provider = createProvider(authType, options);
-    return applyProvider(request, provider);
-  });
+  const provider = createProvider(authType, options);
+  client.interceptors.request.use((request: InternalAxiosRequestConfig) => applyProvider(request, provider));
 }
 
 function createProvider(authType: AuthType, options: AuthOptions): AuthProvider {
@@ -53,7 +51,7 @@ function createProvider(authType: AuthType, options: AuthOptions): AuthProvider 
     auth_cognito_password: options.password ?? "",
   } as any;
   if (authType === "none") return new NullAuthProvider(config);
-  return getAuthProvider(config);
+  return createUncachedAuthProvider(config);
 }
 
 function applyProvider(request: InternalAxiosRequestConfig, provider: AuthProvider): InternalAxiosRequestConfig {

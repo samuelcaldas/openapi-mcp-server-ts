@@ -3,6 +3,7 @@ import express, { type Request, type Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { OAuthTokenVerifier } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { Config } from "../utils/config.js";
+import { validateListenerConfig } from "../utils/config_validator.js";
 import { createServerInstance, type PreparedServerEnvironment } from "../server.js";
 import { createInboundAuthMiddleware } from "../auth/inbound.js";
 import { createHostValidator, createOriginValidator } from "./security_headers.js";
@@ -20,6 +21,7 @@ export interface HttpServerHandle {
  * @returns Configured Express application.
  */
 export function createHttpApp(environment: PreparedServerEnvironment, verifier?: OAuthTokenVerifier): express.Express {
+  validateListenerConfig(environment.configuration);
   const app = express();
   const cfg = environment.configuration;
 
