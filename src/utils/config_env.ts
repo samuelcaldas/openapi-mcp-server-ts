@@ -51,6 +51,12 @@ export interface ConfigOptions {
   trustProxy?: string | boolean;
   allowedHosts?: string;
   allowedOrigins?: string;
+  logLevel?: string;
+  enablePrometheus?: boolean;
+  prometheusPort?: number | string;
+  useTenacity?: boolean;
+  httpMaxRetries?: number | string;
+  httpRetryDelay?: number | string;
 }
 
 export function readEnvironment(): ConfigOptions {
@@ -105,6 +111,12 @@ export function readEnvironment(): ConfigOptions {
     trustProxy: env.TRUST_PROXY,
     allowedHosts: env.ALLOWED_HOSTS,
     allowedOrigins: env.ALLOWED_ORIGINS,
+    logLevel: env.LOG_LEVEL,
+    enablePrometheus: parseOptionalBoolean(env.ENABLE_PROMETHEUS),
+    prometheusPort: env.PROMETHEUS_PORT,
+    useTenacity: env.USE_TENACITY === undefined ? undefined : parseOptionalBoolean(env.USE_TENACITY),
+    httpMaxRetries: env.HTTP_MAX_RETRIES,
+    httpRetryDelay: env.HTTP_RETRY_DELAY,
   };
 }
 

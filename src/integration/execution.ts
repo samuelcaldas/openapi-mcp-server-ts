@@ -4,6 +4,7 @@ import type { CredentialProvider } from "../auth/token_exchange.js";
 import type { OperationContext, OperationResult } from "./index.js";
 import type { OperationDefinition } from "./discovery.js";
 import { buildInputSchema, getZodType } from "./schema.js";
+import { metrics } from "../metrics/index.js";
 
 export interface ExecutionDependencies {
   client: Pick<AxiosInstance, "request">;
@@ -14,22 +15,29 @@ export interface ExecutionDependencies {
 
 /** Validate inputs and execute a discovered operation against the configured API. */
 export async function executeOperation(operation: OperationDefinition, args: Record<string, unknown>, context: OperationContext | undefined, dependencies: ExecutionDependencies): Promise<OperationResult> {
-  const schema = buildInputSchema(operation.parameters, operation.request_body, operation.body_required);
-  const parsed = z.object(schema).safeParse(args);
-  if (!parsed.success) throw new Error(`Invalid arguments for ${operation.operation_id}: ${parsed.error.message}`);
-  const headers = await resolveHeaders(context, dependencies);
-  const { url, params } = populateRequest(operation, parsed.data, dependencies.base_url, headers);
-  let response: { status: number; data: unknown };
+  const startTime = Date.now();
   try {
-    response = await dependencies.client.request({ url, params, headers, data: parsed.data.body, method: operation.method.toUpperCase() });
+    const schema = buildInputSchema(operation.parameters, operation.request_body, operation.body_required);
+    const parsed = z.object(schema).safeParse(args);
+    if (!parsed.success) throw new Error(`Invalid arguments for ${operation.operation_id}: ${parsed.error.message}`);
+    const headers = await resolveHeaders(context, dependencies);
+    const { url, params } = populateRequest(operation, parsed.data, dependencies.base_url, headers);
+    let response: { status: number; data: unknown };
+    try {
+      response = await dependencies.client.request({ url, params, headers, data: parsed.data.body, method: operation.method.toUpperCase() });
+    } catch (error) {
+      const status = (error as { response?: { status?: number } }).response?.status;
+      // Upstream errors may contain Authorization headers or reflected credentials.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error(`Operation ${operation.operation_id} failed${status ? ` (HTTP ${status})` : " (network request)"}`);
+    }
+    const data = dependencies.validate_output ? validateResponse(response, operation) : response.data;
+    metrics.recordToolUsage(operation.operation_id, Date.now() - startTime, true);
+    return { status: response.status, data };
   } catch (error) {
-    const status = (error as { response?: { status?: number } }).response?.status;
-    // Upstream errors may contain Authorization headers or reflected credentials.
-    // eslint-disable-next-line preserve-caught-error
-    throw new Error(`Operation ${operation.operation_id} failed${status ? ` (HTTP ${status})` : " (network request)"}`);
+    metrics.recordToolUsage(operation.operation_id, Date.now() - startTime, false, error instanceof Error ? error.message : String(error));
+    throw error;
   }
-  const data = dependencies.validate_output ? validateResponse(response, operation) : response.data;
-  return { status: response.status, data };
 }
 
 async function resolveHeaders(context: OperationContext | undefined, dependencies: ExecutionDependencies): Promise<Record<string, string>> {

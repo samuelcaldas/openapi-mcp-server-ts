@@ -14,6 +14,11 @@ interface OpenApiDocument {
   [key: string]: unknown;
 }
 
+import { CacheProvider } from "./cache_provider.js";
+
+const specCache = new CacheProvider<OpenApiDocument>(100, 3600);
+export { specCache };
+
 /** Parse and validate an OpenAPI document from an object, local file, or URL. */
 export async function parseOpenApiSpec(
   source: string | OpenApiDocument,
@@ -21,13 +26,25 @@ export async function parseOpenApiSpec(
   allowInsecureHttp = false,
   allowedSpecDirs?: string[],
 ): Promise<OpenApiDocument> {
+  const cacheKey = typeof source === "string" ? `spec:${source}` : undefined;
+  if (cacheKey) {
+    const cachedDoc = specCache.get(cacheKey);
+    if (cachedDoc) {
+      return JSON.parse(JSON.stringify(cachedDoc)) as OpenApiDocument;
+    }
+  }
+
   const rawDocument = await loadDocument(source, allowPrivateNetworks, allowInsecureHttp, allowedSpecDirs);
   rejectExternalReferences(rawDocument);
   const parser = new SwaggerParser();
   const dereferenced = await parser.dereference(rawDocument as any, {
     resolve: { external: false, file: false, http: false },
   }) as any;
-  return dereferenced as unknown as OpenApiDocument;
+  const result = dereferenced as unknown as OpenApiDocument;
+  if (cacheKey) {
+    specCache.set(cacheKey, result);
+  }
+  return result;
 }
 
 async function loadDocument(

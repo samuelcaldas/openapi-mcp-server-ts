@@ -5,6 +5,7 @@ import { createPreparedIntegration } from "../integration/index.js";
 
 export { getZodType } from "../integration/schema.js";
 export { buildRouteMaps, type RouteMap } from "./route_map.js";
+export { registerHealthCheckTool, checkHealth, type HealthCheckOptions, type HealthCheckResult } from "./health_check.js";
 
 type HttpClientLike = { request: (configuration: Record<string, unknown>) => Promise<{ data: unknown; status?: number }> };
 

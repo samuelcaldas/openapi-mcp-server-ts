@@ -82,6 +82,9 @@ export async function fetchPinned(url: ValidatedURL, options: { allowHttp?: bool
   throw new SSRFFetchError(`No resolved IPs available for ${getOriginalUrl(url)}`);
 }
 
+import { metrics } from "../metrics/index.js";
+import { logger } from "./logger.js";
+
 export function createHttpClient(allowPrivateNetworks = false, allowInsecureHttp = false): AxiosInstance {
   const client = axios.create({
     timeout: 30_000,
@@ -91,16 +94,39 @@ export function createHttpClient(allowPrivateNetworks = false, allowInsecureHttp
     maxBodyLength: MAX_SPEC_BYTES,
     headers: { Accept: "application/json, application/yaml, text/yaml, */*" },
   });
-  client.interceptors.request.use(async (request: InternalAxiosRequestConfig) => pinRequest(request, allowPrivateNetworks, allowInsecureHttp));
-  client.interceptors.response.use(undefined, async (error) => {
-    const request = error.config as (InternalAxiosRequestConfig & { __retryCount?: number }) | undefined;
-    if (!request || !isRetryable(error)) throw error;
-    request.__retryCount = request.__retryCount ?? 0;
-    if (request.__retryCount >= 3) throw error;
-    request.__retryCount += 1;
-    await new Promise((resolve) => setTimeout(resolve, 250 * request.__retryCount!));
-    return client(request);
+
+  client.interceptors.request.use(async (request: InternalAxiosRequestConfig & { __startTime?: number }) => {
+    request.__startTime = Date.now();
+    return pinRequest(request, allowPrivateNetworks, allowInsecureHttp);
   });
+
+  client.interceptors.response.use(
+    (response) => {
+      const config = response.config as (InternalAxiosRequestConfig & { __startTime?: number });
+      const durationMs = config.__startTime ? Date.now() - config.__startTime : 0;
+      const path = config.url || "/";
+      metrics.recordApiCall(path, config.method || "GET", response.status, durationMs);
+      return response;
+    },
+    async (error) => {
+      const config = error.config as (InternalAxiosRequestConfig & { __startTime?: number; __retryCount?: number }) | undefined;
+      const durationMs = config?.__startTime ? Date.now() - config.__startTime : 0;
+      const path = config?.url || "/";
+      const status = error.response?.status || 0;
+      const errorMsg = error.message || String(error);
+      metrics.recordApiCall(path, config?.method || "GET", status, durationMs, errorMsg);
+
+      if (!config || !isRetryable(error)) throw error;
+      config.__retryCount = config.__retryCount ?? 0;
+      if (config.__retryCount >= 3) throw error;
+      config.__retryCount += 1;
+      const delay = 250 * (2 ** (config.__retryCount - 1)) + Math.random() * 50;
+      logger.warn(`Request failed with ${errorMsg}, retrying (${config.__retryCount}/3) in ${Math.round(delay)}ms...`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return client(config);
+    },
+  );
+
   return client;
 }
 
@@ -127,7 +153,14 @@ function isRetryable(error: unknown): boolean {
   return ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "ERR_NETWORK"].includes(code ?? "");
 }
 
-export async function makeRequestWithRetry(client: AxiosInstance, method: string, url: string, maxRetries = 3, retryDelay = 1000, requestConfig: AxiosRequestConfig = {}): Promise<any> {
+export async function makeRequestWithRetry(
+  client: AxiosInstance,
+  method: string,
+  url: string,
+  maxRetries = 3,
+  retryDelay = 1000,
+  requestConfig: AxiosRequestConfig = {},
+): Promise<any> {
   let lastError: unknown;
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
     try {
@@ -135,7 +168,11 @@ export async function makeRequestWithRetry(client: AxiosInstance, method: string
     } catch (error) {
       lastError = error;
       if (!isRetryable(error) || attempt === maxRetries - 1) throw error;
-      await new Promise((resolve) => setTimeout(resolve, retryDelay * 2 ** attempt));
+      const jitter = Math.random() * 50;
+      const delay = retryDelay * (2 ** attempt) + jitter;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.warn(`Request to ${url} failed, retrying (${attempt + 1}/${maxRetries}) in ${Math.round(delay)}ms: ${errorMsg}`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
   throw lastError;
