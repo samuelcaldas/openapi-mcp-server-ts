@@ -1,4 +1,4 @@
-import { validateUrlForSsrf, createHttpClient } from "./httpClient.js";
+import { validateUrlForSsrf, createHttpClient, HttpClientFactory } from "./httpClient.js";
 import nock from "nock";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -109,5 +109,31 @@ describe("createHttpClient SOT equivalence", () => {
     expect(client.defaults.maxContentLength).toBe(10485760); // 10 MiB
     expect(client.defaults.maxRedirects).toBe(0); // Zero redirects
     expect(client.defaults.timeout).toBe(30000);
+  });
+
+  it("should configure httpAgent and httpsAgent with connection pooling", () => {
+    const client = createHttpClient(false, false, { maxConnections: 50, maxKeepAlive: 10 });
+    const httpAgent = client.defaults.httpAgent as http.Agent;
+    const httpsAgent = client.defaults.httpsAgent as any;
+
+    expect(httpAgent).toBeDefined();
+    expect(httpsAgent).toBeDefined();
+    expect(httpAgent.maxSockets).toBe(50);
+    expect(httpAgent.maxFreeSockets).toBe(10);
+    expect(httpsAgent.maxSockets).toBe(50);
+    expect(httpsAgent.maxFreeSockets).toBe(10);
+  });
+
+  it("should create client via HttpClientFactory with default pool settings", () => {
+    const client = HttpClientFactory.createClient(false, false);
+    const httpAgent = client.defaults.httpAgent as http.Agent;
+    const httpsAgent = client.defaults.httpsAgent as any;
+
+    expect(httpAgent).toBeDefined();
+    expect(httpsAgent).toBeDefined();
+    expect(httpAgent.maxSockets).toBe(100);
+    expect(httpAgent.maxFreeSockets).toBe(20);
+    expect(httpsAgent.maxSockets).toBe(100);
+    expect(httpsAgent.maxFreeSockets).toBe(20);
   });
 });

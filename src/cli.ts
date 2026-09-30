@@ -60,6 +60,38 @@ import { metrics } from "./metrics/index.js";
 import { startPrometheusServer, stopPrometheusServer } from "./metrics/prometheus.js";
 
 /**
+ * Registers signal handlers for graceful shutdown and final metrics logging.
+ * @param enablePrometheus Whether prometheus server needs cleanup on shutdown.
+ */
+export function setupCliSignalHandlers(enablePrometheus = false): void {
+  const handleSignal = async (sig: string) => {
+    logger.debug(`Received signal ${sig}, shutting down gracefully...`);
+    const summary = metrics.getSummary();
+    logger.info(`Final metrics: ${JSON.stringify(summary)}`);
+
+    if (enablePrometheus) {
+      try {
+        await stopPrometheusServer();
+      } catch (err) {
+        logger.debug(`Error stopping prometheus server: ${err}`);
+      }
+    }
+
+    if (sig === "SIGINT") {
+      logger.info("Process Interrupted, Shutting down gracefully...");
+    }
+    process.exit(0);
+  };
+
+  process.once("SIGINT", () => {
+    void handleSignal("SIGINT");
+  });
+  process.once("SIGTERM", () => {
+    void handleSignal("SIGTERM");
+  });
+}
+
+/**
  * Executes the CLI entrypoint, loading configuration, validating, and starting the chosen transport.
  * @param argv Command line argument array (defaults to process.argv).
  */
@@ -73,13 +105,9 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
   if (configuration.enable_prometheus) {
     metrics.setPrometheusEnabled(true);
     await startPrometheusServer(configuration.prometheus_port);
-    process.on("SIGINT", async () => {
-      await stopPrometheusServer();
-    });
-    process.on("SIGTERM", async () => {
-      await stopPrometheusServer();
-    });
   }
+
+  setupCliSignalHandlers(configuration.enable_prometheus);
 
   const environment = await prepareServerEnvironment(configuration);
   if (configuration.transport === "http") {

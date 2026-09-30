@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-app
+.git
+.worktrees
+coverage
+*.log
+.env
+.env.*
+.DS_Store
+.playwright-mcp
+tmp

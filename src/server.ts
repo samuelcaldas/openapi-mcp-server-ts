@@ -18,6 +18,7 @@ import {
 import { registerUiApp } from "./app.js";
 import { registerHealthCheckTool } from "./tools/health_check.js";
 import { registerApiResources } from "./resources/index.js";
+import { logger } from "./utils/logger.js";
 
 const serverStartTime = Date.now();
 
@@ -76,7 +77,36 @@ export function createServerInstance(environment: PreparedServerEnvironment): Mc
   });
 
   registerUiApp(server);
+
+  const counts = getComponentCounts(server);
+  logger.info(
+    `Server components: ${counts.prompts} prompts, ${counts.tools} tools, ${counts.resources} resources, ${counts.resourceTemplates} resource templates`
+  );
+  if (counts.tools === 0 && counts.resources === 0) {
+    logger.warn(
+      "No tools or resources were registered. This might indicate an issue with the API specification or authentication."
+    );
+  }
+
   return server;
+}
+
+export interface ServerComponentCounts {
+  prompts: number;
+  tools: number;
+  resources: number;
+  resourceTemplates: number;
+}
+
+export function getComponentCounts(server: McpServer): ServerComponentCounts {
+  const s = server as any;
+  const countKeys = (obj: unknown) => (obj && typeof obj === "object" ? Object.keys(obj).length : 0);
+  return {
+    prompts: countKeys(s._registeredPrompts),
+    tools: countKeys(s._registeredTools),
+    resources: countKeys(s._registeredResources),
+    resourceTemplates: countKeys(s._registeredResourceTemplates),
+  };
 }
 
 /**
