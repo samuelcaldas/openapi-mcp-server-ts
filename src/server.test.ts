@@ -1,4 +1,5 @@
 import { describe, it, expect } from "@jest/globals";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import {
   createMcpServerAsync,
   prepareServerEnvironment,
   createServerInstance,
+  getComponentCounts,
 } from "./server.js";
 import { Config, loadConfig } from "./utils/config.js";
 import { ServiceCredentialProvider, UserDelegationCredentialProvider } from "./auth/token_exchange.js";
@@ -152,5 +154,22 @@ describe("Server Environment and Instance Lifecycle", () => {
 
     const environment = await prepareServerEnvironment(config);
     expect(environment.credentialProvider).toBeInstanceOf(UserDelegationCredentialProvider);
+  });
+
+  it("calculates component counts accurately via getComponentCounts", () => {
+    const server = new McpServer({
+      name: "test-server",
+      version: "1.0.0",
+    });
+
+    const initialCounts = getComponentCounts(server);
+    expect(initialCounts.tools).toBe(0);
+    expect(initialCounts.prompts).toBe(0);
+    expect(initialCounts.resources).toBe(0);
+    expect(initialCounts.resourceTemplates).toBe(0);
+
+    server.tool("dummyTool", {}, async () => ({ content: [{ type: "text", text: "hello" }] }));
+    const afterCounts = getComponentCounts(server);
+    expect(afterCounts.tools).toBe(1);
   });
 });

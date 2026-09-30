@@ -1,5 +1,5 @@
 import { jest, describe, it, expect } from "@jest/globals";
-import { buildCliProgram, parseCliArgs, runCli } from "./cli.js";
+import { buildCliProgram, parseCliArgs, runCli, setupCliSignalHandlers } from "./cli.js";
 
 describe("CLI Program and Argument Parsing", () => {
   it("builds CLI program with expected name and description", () => {
@@ -58,5 +58,19 @@ describe("CLI Program and Argument Parsing", () => {
       "none",
     ];
     await expect(runCli(args)).rejects.toThrow("Inbound authentication 'none' is forbidden on non-loopback");
+  });
+
+  it("registers signal handlers via setupCliSignalHandlers", () => {
+    const sigintBefore = process.listenerCount("SIGINT");
+    const sigtermBefore = process.listenerCount("SIGTERM");
+
+    setupCliSignalHandlers(false);
+
+    expect(process.listenerCount("SIGINT")).toBe(sigintBefore + 1);
+    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore + 1);
+
+    // Clean up
+    process.removeAllListeners("SIGINT");
+    process.removeAllListeners("SIGTERM");
   });
 });

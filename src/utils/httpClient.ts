@@ -1,4 +1,5 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig, type InternalAxiosRequestConfig } from "axios";
+import http from "node:http";
 import https from "node:https";
 import {
   SSRFError,
@@ -61,7 +62,8 @@ export async function fetchPinned(url: ValidatedURL, options: { allowHttp?: bool
         maxContentLength: maxBytes,
         maxBodyLength: maxBytes,
         headers: { Host: url.hostname },
-        httpsAgent: scheme === "https:" ? new https.Agent({ servername: url.hostname, rejectUnauthorized: true }) : undefined,
+        httpAgent: scheme === "http:" ? new http.Agent({ keepAlive: true, maxSockets: appConfig.HTTP_MAX_CONNECTIONS ?? 100, maxFreeSockets: appConfig.HTTP_MAX_KEEPALIVE ?? 20 }) : undefined,
+        httpsAgent: scheme === "https:" ? new https.Agent({ servername: url.hostname, rejectUnauthorized: true, keepAlive: true, maxSockets: appConfig.HTTP_MAX_CONNECTIONS ?? 100, maxFreeSockets: appConfig.HTTP_MAX_KEEPALIVE ?? 20 }) : undefined,
         validateStatus: (status) => status >= 200 && status < 300,
       });
       const contentLength = Number(response.headers["content-length"]);
@@ -84,20 +86,47 @@ export async function fetchPinned(url: ValidatedURL, options: { allowHttp?: bool
 
 import { metrics } from "../metrics/index.js";
 import { logger } from "./logger.js";
+import { config as appConfig } from "./config.js";
 
-export function createHttpClient(allowPrivateNetworks = false, allowInsecureHttp = false): AxiosInstance {
+export interface HttpClientOptions {
+  maxConnections?: number;
+  maxKeepAlive?: number;
+}
+
+export function createHttpClient(
+  allowPrivateNetworks = false,
+  allowInsecureHttp = false,
+  options: HttpClientOptions = {},
+): AxiosInstance {
+  const maxConnections = options.maxConnections ?? appConfig.HTTP_MAX_CONNECTIONS ?? 100;
+  const maxKeepAlive = options.maxKeepAlive ?? appConfig.HTTP_MAX_KEEPALIVE ?? 20;
+
+  const httpAgent = new http.Agent({
+    keepAlive: true,
+    maxSockets: maxConnections,
+    maxFreeSockets: maxKeepAlive,
+  });
+
+  const httpsAgent = new https.Agent({
+    keepAlive: true,
+    maxSockets: maxConnections,
+    maxFreeSockets: maxKeepAlive,
+  });
+
   const client = axios.create({
     timeout: 30_000,
     proxy: false,
     maxRedirects: 0,
     maxContentLength: MAX_SPEC_BYTES,
     maxBodyLength: MAX_SPEC_BYTES,
+    httpAgent,
+    httpsAgent,
     headers: { Accept: "application/json, application/yaml, text/yaml, */*" },
   });
 
   client.interceptors.request.use(async (request: InternalAxiosRequestConfig & { __startTime?: number }) => {
     request.__startTime = Date.now();
-    return pinRequest(request, allowPrivateNetworks, allowInsecureHttp);
+    return pinRequest(request, allowPrivateNetworks, allowInsecureHttp, maxConnections, maxKeepAlive);
   });
 
   client.interceptors.response.use(
@@ -130,7 +159,23 @@ export function createHttpClient(allowPrivateNetworks = false, allowInsecureHttp
   return client;
 }
 
-async function pinRequest(request: InternalAxiosRequestConfig, allowPrivateNetworks: boolean, allowInsecureHttp: boolean): Promise<InternalAxiosRequestConfig> {
+export class HttpClientFactory {
+  static createClient(
+    allowPrivateNetworks = false,
+    allowInsecureHttp = false,
+    options: HttpClientOptions = {},
+  ): AxiosInstance {
+    return createHttpClient(allowPrivateNetworks, allowInsecureHttp, options);
+  }
+}
+
+async function pinRequest(
+  request: InternalAxiosRequestConfig,
+  allowPrivateNetworks: boolean,
+  allowInsecureHttp: boolean,
+  maxConnections: number,
+  maxKeepAlive: number,
+): Promise<InternalAxiosRequestConfig> {
   request.proxy = false;
   request.maxRedirects = 0;
   if (!request.url) return request;
@@ -141,7 +186,19 @@ async function pinRequest(request: InternalAxiosRequestConfig, allowPrivateNetwo
   if (typeof request.headers.set === "function") request.headers.set("Host", validated.hostname);
   else (request.headers as unknown as Record<string, string>).Host = validated.hostname;
   if (new URL(fullUrl).protocol === "https:") {
-    request.httpsAgent = new https.Agent({ servername: validated.hostname, rejectUnauthorized: true, keepAlive: true, maxSockets: 100, maxFreeSockets: 20 });
+    request.httpsAgent = new https.Agent({
+      servername: validated.hostname,
+      rejectUnauthorized: true,
+      keepAlive: true,
+      maxSockets: maxConnections,
+      maxFreeSockets: maxKeepAlive,
+    });
+  } else if (new URL(fullUrl).protocol === "http:") {
+    request.httpAgent = new http.Agent({
+      keepAlive: true,
+      maxSockets: maxConnections,
+      maxFreeSockets: maxKeepAlive,
+    });
   }
   return request;
 }

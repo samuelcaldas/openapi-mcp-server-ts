@@ -89,6 +89,16 @@ npm test
 npm run validate
 ```
 
+## Documentation
+
+- [Authentication Guide](AUTHENTICATION.md): Details on Bearer, Basic, API Key, AWS Cognito, Inbound Auth, and RFC 8693 User Delegation.
+- [Deployment Guide](DEPLOYMENT.md): Production guidelines, Docker containerization, Streamable HTTP, and reverse proxy setup (Nginx / NPM).
+- [Observability Guide](OBSERVABILITY.md): Metrics system, Prometheus HTTP exporter (:9090), and shutdown telemetry.
+- [AWS Best Practices](AWS_BEST_PRACTICES.md): Security architecture, DNS pinning, connection pooling, and retry resilience.
+- [SDK Integration Guide](docs/sdk-integration.md): Guide for embedding OpenAPI MCP integration inside host applications.
+- [Streamable HTTP Guide](docs/streamable-http.md): In-depth guide on Streamable HTTP transport and reverse proxy trust.
+- [Changelog](CHANGELOG.md): History of notable changes and parity milestones.
+
 ## Upstream Reference
 
 - Upstream Documentation: [awslabs.github.io/mcp/servers/openapi-mcp-server](https://awslabs.github.io/mcp/servers/openapi-mcp-server)
