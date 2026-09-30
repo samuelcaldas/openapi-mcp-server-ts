@@ -1,39 +1,109 @@
+import fs from "fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Config } from "./utils/config.js";
 import { createHttpClient, validateUrlForSpec } from "./utils/httpClient.js";
-import { loadOpenApiSpec, parseOpenApiSpec } from "./utils/openapi.js";
-import { registerToolsFromOpenApi } from "./tools/index.js";
+import { parseOpenApiSpec } from "./utils/openapi.js";
+import { prepare_openapi_integration } from "./integration/index.js";
 import { registerPromptsFromOpenApi } from "./prompts/index.js";
 import { configureAuth, type AuthType } from "./auth/index.js";
+import {
+  type CredentialProvider,
+  ServiceCredentialProvider,
+  UserDelegationCredentialProvider,
+} from "./auth/token_exchange.js";
+import {
+  type PreparedSpecEntry,
+  loadAdditionalEntries,
+} from "./utils/additional_specs.js";
+import { registerUiApp } from "./app.js";
 
-export async function createMcpServerAsync(configuration: Config): Promise<McpServer> {
-  const server = new McpServer({ name: configuration.api_name, version: configuration.version });
+export type { PreparedSpecEntry };
+
+export interface PreparedServerEnvironment {
+  configuration: Config;
+  specs: PreparedSpecEntry[];
+  credentialProvider: CredentialProvider;
+}
+
+/**
+ * Prepares the server environment by loading OpenAPI specifications and configuring credentials once.
+ * @param configuration Validated runtime configuration.
+ * @returns Prepared server environment ready for creating McpServer instances.
+ */
+export async function prepareServerEnvironment(configuration: Config): Promise<PreparedServerEnvironment> {
   const allowedDirs = splitValues(configuration.allowed_spec_dirs);
-  if (configuration.api_base_url) {
-    await validateUrlForSpec(configuration.api_base_url, {
-      allowHttp: configuration.allow_insecure_http,
-      allowPrivateNetworks: configuration.allow_private_networks,
-    });
+  await validateBaseUrl(configuration);
+
+  const credentialProvider = createCredentialProvider(configuration);
+  const specs: PreparedSpecEntry[] = [];
+  const primaryEntry = await loadPrimaryEntry(configuration, allowedDirs, credentialProvider);
+  if (primaryEntry) specs.push(primaryEntry);
+
+  const additionalEntries = await loadAdditionalEntries(configuration, allowedDirs, credentialProvider);
+  specs.push(...additionalEntries);
+
+  return { configuration, specs, credentialProvider };
+}
+
+/**
+ * Creates a fresh McpServer instance registered with tools, prompts, and UI app from the prepared environment.
+ * @param environment Prepared environment containing specs and credentials.
+ * @returns Configured McpServer instance.
+ */
+export function createServerInstance(environment: PreparedServerEnvironment): McpServer {
+  const server = new McpServer({
+    name: environment.configuration.api_name,
+    version: environment.configuration.version,
+  });
+
+  for (const [index, entry] of environment.specs.entries()) {
+    entry.integration.register_tools(server);
+    registerPromptsFromOpenApi(server, entry.spec, index === 0);
   }
-  const primarySpec = await loadPrimarySpec(configuration, allowedDirs);
-  const primaryClient = createConfiguredClient(configuration);
-  if (primarySpec) {
-    const configuredSpec = { ...primarySpec, servers: [{ url: configuration.api_base_url }] };
-    registerToolsFromOpenApi(server, configuredSpec, primaryClient, splitValues(configuration.include_tags), splitValues(configuration.exclude_tags));
-    registerPromptsFromOpenApi(server, configuredSpec);
-  }
-  await registerAdditionalSpecs(server, configuration, allowedDirs);
+
+  registerUiApp(server);
   return server;
 }
 
-async function loadPrimarySpec(configuration: Config, allowedDirs: string[]): Promise<any | undefined> {
+/**
+ * Legacy helper creating a single McpServer instance.
+ * @param configuration Runtime configuration.
+ * @returns Connected or ready McpServer instance.
+ */
+export async function createMcpServerAsync(configuration: Config): Promise<McpServer> {
+  const environment = await prepareServerEnvironment(configuration);
+  return createServerInstance(environment);
+}
+
+async function validateBaseUrl(configuration: Config): Promise<void> {
+  if (!configuration.api_base_url) return;
+  await validateUrlForSpec(configuration.api_base_url, {
+    allowHttp: configuration.allow_insecure_http,
+    allowPrivateNetworks: configuration.allow_private_networks,
+  });
+}
+
+async function loadPrimaryEntry(configuration: Config, allowedDirs: string[], provider: CredentialProvider): Promise<PreparedSpecEntry | undefined> {
   const source = configuration.api_spec_url || configuration.api_spec_path;
   if (!source) return undefined;
-  return parseOpenApiSpec(source, configuration.allow_private_networks, configuration.allow_insecure_http, allowedDirs);
+  const spec = await parseOpenApiSpec(source, configuration.allow_private_networks, configuration.allow_insecure_http, allowedDirs);
+  const client = createConfiguredClient(configuration);
+  const configuredSpec = { ...spec, servers: [{ url: configuration.api_base_url }] };
+  const includeTags = splitValues(configuration.include_tags);
+  const excludeTags = splitValues(configuration.exclude_tags);
+  const integration = await prepare_openapi_integration({
+    source: spec, base_url: configuration.api_base_url, include_tags: includeTags,
+    exclude_tags: excludeTags, validate_output: configuration.validate_output,
+    credential_provider: provider, http_client: client,
+    network_policy: { allow_private_networks: configuration.allow_private_networks,
+      allow_insecure_http: configuration.allow_insecure_http, allowed_spec_dirs: allowedDirs },
+  });
+  return { spec: configuredSpec, client, includeTags, excludeTags, integration };
 }
 
 function createConfiguredClient(configuration: Config): ReturnType<typeof createHttpClient> {
   const client = createHttpClient(configuration.allow_private_networks, configuration.allow_insecure_http);
+  if (configuration.delegation_mode === "user") return client;
   configureAuth(client, configuration.auth_type as AuthType, {
     token: configuration.auth_token,
     username: configuration.auth_username,
@@ -50,64 +120,31 @@ function createConfiguredClient(configuration: Config): ReturnType<typeof create
   return client;
 }
 
-async function registerAdditionalSpecs(server: McpServer, configuration: Config, allowedDirs: string[]): Promise<void> {
-  if (!configuration.additional_specs) return;
-  let entries: unknown;
-  try {
-    entries = JSON.parse(configuration.additional_specs);
-  } catch {
-    return;
+function createCredentialProvider(configuration: Config): CredentialProvider {
+  if (configuration.delegation_mode !== "user") {
+    return new ServiceCredentialProvider();
   }
-  if (!Array.isArray(entries)) return;
-  for (const rawEntry of entries) {
-    if (!isRecord(rawEntry)) continue;
-    await registerAdditionalSpec(server, configuration, rawEntry, allowedDirs);
-  }
+  const clientSecret = resolveTokenExchangeSecret(configuration);
+  return new UserDelegationCredentialProvider({
+    tokenExchangeUrl: configuration.token_exchange_url,
+    targetAudience: configuration.token_exchange_audience,
+    targetResource: configuration.inbound_oauth_resource_server_url || undefined,
+    targetScopes: configuration.token_exchange_scopes || undefined,
+    clientId: configuration.token_exchange_client_id || undefined,
+    clientSecret,
+    allowInsecureHttp: configuration.allow_insecure_http,
+    allowPrivateNetworks: configuration.allow_private_networks,
+  });
 }
 
-async function registerAdditionalSpec(server: McpServer, configuration: Config, entry: Record<string, unknown>, allowedDirs: string[]): Promise<void> {
-  const source = stringValue(entry.spec_url) || stringValue(entry.spec_path);
-  const baseUrl = stringValue(entry.base_url);
-  if (!source || !baseUrl) return;
-  try {
-    await validateUrlForSpec(baseUrl, { allowHttp: configuration.allow_insecure_http, allowPrivateNetworks: configuration.allow_private_networks });
-    const specUrl = stringValue(entry.spec_url);
-    const validatedSpecUrl = specUrl
-      ? await validateUrlForSpec(specUrl, { allowHttp: configuration.allow_insecure_http, allowPrivateNetworks: configuration.allow_private_networks })
-      : undefined;
-    const spec = validatedSpecUrl
-      ? await loadOpenApiSpec({ validatedUrl: validatedSpecUrl, allowHttp: configuration.allow_insecure_http })
-      : await parseOpenApiSpec(source, configuration.allow_private_networks, configuration.allow_insecure_http, allowedDirs);
-    const client = createHttpClient(configuration.allow_private_networks, configuration.allow_insecure_http);
-    const entryAuthType = stringValue(entry.auth_type) || "none";
-    const entryApiKeyIn = stringValue(entry.auth_api_key_in) || "header";
-    const effectiveAuthType = entryAuthType === "api_key" && entryApiKeyIn === "query" ? "none" : entryAuthType;
-    configureAuth(client, effectiveAuthType as AuthType, {
-      token: stringValue(entry.auth_token),
-      username: stringValue(entry.auth_username),
-      password: stringValue(entry.auth_password),
-      apiKey: entryAuthType === "api_key" && entryApiKeyIn === "query" ? undefined : stringValue(entry.auth_api_key),
-      apiKeyName: stringValue(entry.auth_api_key_name) || "X-API-Key",
-      apiKeyIn: entryApiKeyIn as "header" | "query" | "cookie",
-    });
-    const includeTags = splitValues(stringValue(entry.include_tags));
-    const excludeTags = splitValues(stringValue(entry.exclude_tags));
-    const renamedSpec = { ...spec, servers: [{ url: baseUrl }] };
-    registerToolsFromOpenApi(server, renamedSpec, client, includeTags, excludeTags);
-    registerPromptsFromOpenApi(server, renamedSpec);
-  } catch {
-    // Optional additional specifications must not prevent the primary server from starting.
+function resolveTokenExchangeSecret(configuration: Config): string | undefined {
+  if (configuration.token_exchange_client_secret) return configuration.token_exchange_client_secret;
+  if (configuration.token_exchange_client_secret_file && fs.existsSync(configuration.token_exchange_client_secret_file)) {
+    return fs.readFileSync(configuration.token_exchange_client_secret_file, "utf8").trim();
   }
+  return undefined;
 }
 
 function splitValues(value: string | undefined): string[] {
   return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

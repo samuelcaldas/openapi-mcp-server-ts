@@ -1,7 +1,35 @@
 import axios, { AxiosHeaders } from "axios";
 import { configureAuth } from "./index.js";
+import { registerAuthProvider, authProviders } from "./auth_factory.js";
+import { BearerAuthProvider } from "./bearer_auth.js";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 
 describe("configureAuth", () => {
+  it("owns an independent service provider per configured HTTP client", async () => {
+    let created = 0;
+    class CountingProvider extends BearerAuthProvider {
+      constructor(configuration: ConstructorParameters<typeof BearerAuthProvider>[0]) {
+        super(configuration);
+        created += 1;
+      }
+    }
+    registerAuthProvider("isolated-test-provider", CountingProvider);
+    const api = http.createServer((_request, response) => response.end("OK"));
+    await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
+    const url = `http://127.0.0.1:${(api.address() as AddressInfo).port}`;
+    try {
+      const first = axios.create();
+      const second = axios.create();
+      configureAuth(first, "isolated-test-provider" as "bearer", { token: "same-secret" });
+      configureAuth(second, "isolated-test-provider" as "bearer", { token: "same-secret" });
+      await Promise.all([first.get(url), second.get(url)]);
+      expect(created).toBe(2);
+    } finally {
+      authProviders.delete("isolated-test-provider");
+      await new Promise<void>((resolve) => api.close(() => resolve()));
+    }
+  });
   it("should configure bearer auth", async () => {
     const client = axios.create();
     configureAuth(client, "bearer", { token: "123" });

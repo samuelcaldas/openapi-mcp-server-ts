@@ -33,8 +33,14 @@ export function clearProviderCache(): void {
   providerCache.clear();
 }
 
-function hashSecret(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
+function hashSecret(value?: string): string {
+  return createHash("sha256").update(value ?? "").digest("hex");
+}
+
+/** Create an integration-owned provider without sharing its state across clients. */
+export function createUncachedAuthProvider(config: Config): AuthProviderProtocol {
+  const Provider = authProviders.get(config.auth_type.toLowerCase()) ?? NullAuthProvider;
+  return new Provider(config);
 }
 
 export function getAuthProvider(config: Config): AuthProviderProtocol {
@@ -48,7 +54,9 @@ export function getAuthProvider(config: Config): AuthProviderProtocol {
     apiKey: hashSecret(config.auth_api_key),
     apiKeyName: config.auth_api_key_name,
     apiKeyIn: config.auth_api_key_in,
-    cognito: [hashSecret(config.auth_cognito_client_id), config.auth_cognito_username, config.auth_cognito_domain],
+    cognito: [hashSecret(config.auth_cognito_client_id), config.auth_cognito_username,
+      config.auth_cognito_domain, hashSecret(config.auth_cognito_client_secret),
+      config.auth_cognito_scopes, config.auth_cognito_region, config.auth_cognito_user_pool_id],
   });
   const cached = providerCache.get(key);
   if (cached) return cached;

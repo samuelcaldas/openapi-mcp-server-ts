@@ -1,6 +1,5 @@
 import type { Config } from "../utils/config.js";
 import { MissingCredentialsError } from "./auth_errors.js";
-import { getTokenCache } from "./auth_cache.js";
 import { BaseAuthProvider } from "./base_auth.js";
 
 export class BearerAuthProvider extends BaseAuthProvider {
@@ -34,11 +33,6 @@ export class BearerAuthProvider extends BaseAuthProvider {
   }
 
   protected generateAuthHeaders(token: string): Record<string, string> {
-    const cacheKey = `bearer:${token}`;
-    const cached = getTokenCache().get(cacheKey);
-    if (cached) return cached as Record<string, string>;
-    const headers = { Authorization: `Bearer ${token}` };
-    getTokenCache().set(cacheKey, headers, this.tokenTtl);
-    return headers;
+    return { Authorization: `Bearer ${token}` };
   }
 }
