@@ -4,6 +4,7 @@ import { validateConfig } from "./utils/config_validator.js";
 import { prepareServerEnvironment } from "./server.js";
 import { startStdioServer } from "./transports/stdio.js";
 import { startHttpServer } from "./transports/http.js";
+import { logger } from "./utils/logger.js";
 
 /**
  * Builds the commander Command instance with all CLI options.
@@ -36,7 +37,11 @@ export function buildCliProgram(): Command {
     .option("--delegation-mode <mode>", "Delegation mode to destination API (service, user)")
     .option("--trust-proxy <val>", "Trust reverse proxy (e.g. true, 10.250.50.60)")
     .option("--allowed-hosts <hosts>", "Allowed Host headers (comma-separated)")
-    .option("--allowed-origins <origins>", "Allowed Origin headers (comma-separated)");
+    .option("--allowed-origins <origins>", "Allowed Origin headers (comma-separated)")
+    .option("--log-level <level>", "Set logging level (debug, info, warn, error)")
+    .option("--enable-prometheus", "Enable Prometheus HTTP metrics exporter")
+    .option("--prometheus-port <port>", "Port for Prometheus metrics exporter")
+    .option("--use-tenacity", "Enable exponential backoff retry logic");
   return program;
 }
 
@@ -51,6 +56,9 @@ export function parseCliArgs(program: Command, argv: string[]): ConfigOptions {
   return program.opts();
 }
 
+import { metrics } from "./metrics/index.js";
+import { startPrometheusServer, stopPrometheusServer } from "./metrics/prometheus.js";
+
 /**
  * Executes the CLI entrypoint, loading configuration, validating, and starting the chosen transport.
  * @param argv Command line argument array (defaults to process.argv).
@@ -60,6 +68,18 @@ export async function runCli(argv: string[] = process.argv): Promise<void> {
   const parsedOptions = parseCliArgs(program, argv);
   const configuration = loadConfig(parsedOptions);
   validateConfig(configuration);
+  logger.setLevel(configuration.log_level);
+
+  if (configuration.enable_prometheus) {
+    metrics.setPrometheusEnabled(true);
+    await startPrometheusServer(configuration.prometheus_port);
+    process.on("SIGINT", async () => {
+      await stopPrometheusServer();
+    });
+    process.on("SIGTERM", async () => {
+      await stopPrometheusServer();
+    });
+  }
 
   const environment = await prepareServerEnvironment(configuration);
   if (configuration.transport === "http") {

@@ -66,6 +66,13 @@ export class Config {
   allowed_hosts = "";
   allowed_origins = "";
 
+  log_level = "info";
+  enable_prometheus = false;
+  prometheus_port = 9090;
+  use_tenacity = true;
+  http_max_retries = 3;
+  http_retry_delay = 1000;
+
   constructor(options: ConfigOptions = {}) {
     this.apply(normalizeArgs(options as ConfigOptions & Record<string, unknown>));
   }
@@ -122,6 +129,12 @@ export class Config {
       ["trust_proxy", stringValue(options.trustProxy)],
       ["allowed_hosts", options.allowedHosts],
       ["allowed_origins", options.allowedOrigins],
+      ["log_level", options.logLevel],
+      ["enable_prometheus", options.enablePrometheus],
+      ["prometheus_port", toNumber(options.prometheusPort)],
+      ["use_tenacity", options.useTenacity],
+      ["http_max_retries", toNumber(options.httpMaxRetries)],
+      ["http_retry_delay", toNumber(options.httpRetryDelay)],
     ];
 
     for (const [key, value] of assignments) {
@@ -150,25 +163,47 @@ export function loadConfig(args?: ConfigOptions | Record<string, unknown>): Conf
   return new Config({ ...environment, ...suppliedArgs });
 }
 
+const configOverrides: Record<string, unknown> = {};
+
 export const config = {
-  API_NAME: process.env.API_NAME || "awslabs-openapi-mcp-server",
-  API_BASE_URL: process.env.API_BASE_URL || "https://localhost:8000",
-  API_SPEC_URL: process.env.API_SPEC_URL || "",
-  API_SPEC_PATH: process.env.API_SPEC_PATH || "",
-  HOST: process.env.HOST || process.env.SERVER_HOST || "127.0.0.1",
-  PORT: Number.parseInt(process.env.PORT || process.env.SERVER_PORT || "8000", 10),
-  TRANSPORT: process.env.TRANSPORT || process.env.SERVER_TRANSPORT || "stdio",
-  METRICS_MAX_HISTORY: Number.parseInt(process.env.METRICS_MAX_HISTORY || "100", 10),
-  ENABLE_PROMETHEUS: process.env.ENABLE_PROMETHEUS === "true",
-  PROMETHEUS_PORT: Number.parseInt(process.env.PROMETHEUS_PORT || "9090", 10),
-  ENABLE_OPERATION_PROMPTS: process.env.ENABLE_OPERATION_PROMPTS !== "false",
-  HTTP_MAX_CONNECTIONS: Number.parseInt(process.env.HTTP_MAX_CONNECTIONS || "100", 10),
-  HTTP_MAX_KEEPALIVE: Number.parseInt(process.env.HTTP_MAX_KEEPALIVE || "20", 10),
-  USE_TENACITY: process.env.USE_TENACITY !== "false",
-  CACHE_MAXSIZE: Number.parseInt(process.env.CACHE_MAXSIZE || "1000", 10),
-  CACHE_TTL: Number.parseInt(process.env.CACHE_TTL || "3600", 10),
-  USE_CACHETOOLS: process.env.USE_CACHETOOLS !== "false",
-  VALIDATE_OUTPUT: process.env.VALIDATE_OUTPUT !== "false",
-  ALLOW_INSECURE_HTTP: process.env.ALLOW_INSECURE_HTTP === "true",
-  ALLOW_PRIVATE_NETWORKS: process.env.ALLOW_PRIVATE_NETWORKS === "true",
+  get API_NAME(): string { return (configOverrides.API_NAME as string) ?? (process.env.API_NAME || "awslabs-openapi-mcp-server"); },
+  set API_NAME(v: string) { configOverrides.API_NAME = v; },
+  get API_BASE_URL(): string { return (configOverrides.API_BASE_URL as string) ?? (process.env.API_BASE_URL || "https://localhost:8000"); },
+  set API_BASE_URL(v: string) { configOverrides.API_BASE_URL = v; },
+  get API_SPEC_URL(): string { return (configOverrides.API_SPEC_URL as string) ?? (process.env.API_SPEC_URL || ""); },
+  set API_SPEC_URL(v: string) { configOverrides.API_SPEC_URL = v; },
+  get API_SPEC_PATH(): string { return (configOverrides.API_SPEC_PATH as string) ?? (process.env.API_SPEC_PATH || ""); },
+  set API_SPEC_PATH(v: string) { configOverrides.API_SPEC_PATH = v; },
+  get HOST(): string { return (configOverrides.HOST as string) ?? (process.env.HOST || process.env.SERVER_HOST || "127.0.0.1"); },
+  set HOST(v: string) { configOverrides.HOST = v; },
+  get PORT(): number { return (configOverrides.PORT as number) ?? Number.parseInt(process.env.PORT || process.env.SERVER_PORT || "8000", 10); },
+  set PORT(v: number) { configOverrides.PORT = v; },
+  get TRANSPORT(): string { return (configOverrides.TRANSPORT as string) ?? (process.env.TRANSPORT || process.env.SERVER_TRANSPORT || "stdio"); },
+  set TRANSPORT(v: string) { configOverrides.TRANSPORT = v; },
+  get METRICS_MAX_HISTORY(): number { return (configOverrides.METRICS_MAX_HISTORY as number) ?? Number.parseInt(process.env.METRICS_MAX_HISTORY || "100", 10); },
+  set METRICS_MAX_HISTORY(v: number) { configOverrides.METRICS_MAX_HISTORY = v; },
+  get ENABLE_PROMETHEUS(): boolean { return (configOverrides.ENABLE_PROMETHEUS as boolean) ?? (process.env.ENABLE_PROMETHEUS === "true"); },
+  set ENABLE_PROMETHEUS(v: boolean) { configOverrides.ENABLE_PROMETHEUS = v; },
+  get PROMETHEUS_PORT(): number { return (configOverrides.PROMETHEUS_PORT as number) ?? Number.parseInt(process.env.PROMETHEUS_PORT || "9090", 10); },
+  set PROMETHEUS_PORT(v: number) { configOverrides.PROMETHEUS_PORT = v; },
+  get ENABLE_OPERATION_PROMPTS(): boolean { return (configOverrides.ENABLE_OPERATION_PROMPTS as boolean) ?? (process.env.ENABLE_OPERATION_PROMPTS !== "false"); },
+  set ENABLE_OPERATION_PROMPTS(v: boolean) { configOverrides.ENABLE_OPERATION_PROMPTS = v; },
+  get HTTP_MAX_CONNECTIONS(): number { return (configOverrides.HTTP_MAX_CONNECTIONS as number) ?? Number.parseInt(process.env.HTTP_MAX_CONNECTIONS || "100", 10); },
+  set HTTP_MAX_CONNECTIONS(v: number) { configOverrides.HTTP_MAX_CONNECTIONS = v; },
+  get HTTP_MAX_KEEPALIVE(): number { return (configOverrides.HTTP_MAX_KEEPALIVE as number) ?? Number.parseInt(process.env.HTTP_MAX_KEEPALIVE || "20", 10); },
+  set HTTP_MAX_KEEPALIVE(v: number) { configOverrides.HTTP_MAX_KEEPALIVE = v; },
+  get USE_TENACITY(): boolean { return (configOverrides.USE_TENACITY as boolean) ?? (process.env.USE_TENACITY !== "false"); },
+  set USE_TENACITY(v: boolean) { configOverrides.USE_TENACITY = v; },
+  get CACHE_MAXSIZE(): number { return (configOverrides.CACHE_MAXSIZE as number) ?? Number.parseInt(process.env.CACHE_MAXSIZE || "1000", 10); },
+  set CACHE_MAXSIZE(v: number) { configOverrides.CACHE_MAXSIZE = v; },
+  get CACHE_TTL(): number { return (configOverrides.CACHE_TTL as number) ?? Number.parseInt(process.env.CACHE_TTL || "3600", 10); },
+  set CACHE_TTL(v: number) { configOverrides.CACHE_TTL = v; },
+  get USE_CACHETOOLS(): boolean { return (configOverrides.USE_CACHETOOLS as boolean) ?? (process.env.USE_CACHETOOLS !== "false"); },
+  set USE_CACHETOOLS(v: boolean) { configOverrides.USE_CACHETOOLS = v; },
+  get VALIDATE_OUTPUT(): boolean { return (configOverrides.VALIDATE_OUTPUT as boolean) ?? (process.env.VALIDATE_OUTPUT !== "false"); },
+  set VALIDATE_OUTPUT(v: boolean) { configOverrides.VALIDATE_OUTPUT = v; },
+  get ALLOW_INSECURE_HTTP(): boolean { return (configOverrides.ALLOW_INSECURE_HTTP as boolean) ?? (process.env.ALLOW_INSECURE_HTTP === "true"); },
+  set ALLOW_INSECURE_HTTP(v: boolean) { configOverrides.ALLOW_INSECURE_HTTP = v; },
+  get ALLOW_PRIVATE_NETWORKS(): boolean { return (configOverrides.ALLOW_PRIVATE_NETWORKS as boolean) ?? (process.env.ALLOW_PRIVATE_NETWORKS === "true"); },
+  set ALLOW_PRIVATE_NETWORKS(v: boolean) { configOverrides.ALLOW_PRIVATE_NETWORKS = v; },
 };

@@ -67,6 +67,12 @@ export function normalizeArgs(args: ConfigOptions | Record<string, unknown>): Co
     trustProxy: stringValue(source.trustProxy ?? source.trust_proxy),
     allowedHosts: stringValue(source.allowedHosts ?? source.allowed_hosts),
     allowedOrigins: stringValue(source.allowedOrigins ?? source.allowed_origins),
+    logLevel: stringValue(source.logLevel ?? source.log_level),
+    enablePrometheus: booleanValue(source.enablePrometheus ?? source.enable_prometheus),
+    prometheusPort: numberOrString(source.prometheusPort ?? source.prometheus_port),
+    useTenacity: booleanValue(source.useTenacity ?? source.use_tenacity),
+    httpMaxRetries: numberOrString(source.httpMaxRetries ?? source.http_max_retries),
+    httpRetryDelay: numberOrString(source.httpRetryDelay ?? source.http_retry_delay),
   };
 }
 

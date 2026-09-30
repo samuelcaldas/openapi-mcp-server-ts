@@ -16,6 +16,10 @@ import {
   loadAdditionalEntries,
 } from "./utils/additional_specs.js";
 import { registerUiApp } from "./app.js";
+import { registerHealthCheckTool } from "./tools/health_check.js";
+import { registerApiResources } from "./resources/index.js";
+
+const serverStartTime = Date.now();
 
 export type { PreparedSpecEntry };
 
@@ -59,7 +63,17 @@ export function createServerInstance(environment: PreparedServerEnvironment): Mc
   for (const [index, entry] of environment.specs.entries()) {
     entry.integration.register_tools(server);
     registerPromptsFromOpenApi(server, entry.spec, index === 0);
+    registerApiResources(server, environment.configuration.api_name, entry.spec, entry.client);
   }
+
+  const primarySpec = environment.specs[0];
+  registerHealthCheckTool(server, {
+    apiName: environment.configuration.api_name,
+    version: environment.configuration.version,
+    apiBaseUrl: environment.configuration.api_base_url,
+    client: primarySpec?.client,
+    startTime: serverStartTime,
+  });
 
   registerUiApp(server);
   return server;

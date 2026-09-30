@@ -52,7 +52,14 @@ interface RawOperation {
 function validateOperation(raw: unknown, method: string, path: string): RawOperation {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`Invalid OpenAPI operation ${method.toUpperCase()} ${path}`);
   const operation = raw as RawOperation;
-  if (!operation.operationId || typeof operation.operationId !== "string") throw new Error(`Missing operationId for ${method.toUpperCase()} ${path}`);
+  if (!operation.operationId || typeof operation.operationId !== "string") {
+    const cleanPath = path
+      .replace(/\{([^}]+)\}/g, "$1")
+      .replace(/[^a-zA-Z0-9_]/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .replace(/_+/g, "_");
+    operation.operationId = `${method.toLowerCase()}_${cleanPath || "root"}`;
+  }
   return operation;
 }
 
